@@ -128,8 +128,13 @@ st.markdown(
         font-weight: bold;
         color: #eb1921;  /* Black text */
     }
-    .stSidebar,.stSidebarCollapsedControl, .stCode {
+    .stSidebar,.stSidebarCollapsedControl,
+     {
        display:none;
+    }
+    .stExpander p 
+    {
+    fornt-weight:bold;
     }
     </style>
     """,
@@ -383,7 +388,8 @@ def display_content(content: list, message_index: int = None) -> None:
                 st.markdown(assistant_message_html, unsafe_allow_html=True)
 
         elif item["type"] == "suggestions":
-            with st.expander("Suggestions", expanded=True):
+            #st.markdown("<h3 style='color: blue; font-weight: bold;font-size:14px;'>Suggestions</h3>", unsafe_allow_html=True)
+            with st.expander("suggestions", expanded=True):
                 for suggestion_index, suggestion in enumerate(item["suggestions"]):
                     if st.button(suggestion, key=f"{message_index}_{suggestion_index}"):
                         st.session_state.active_suggestion = suggestion
