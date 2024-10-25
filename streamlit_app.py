@@ -4,7 +4,8 @@ import pandas as pd
 import requests
 import snowflake.connector
 import streamlit as st
-
+from deep_translator import GoogleTranslator  # Translation library
+from bs4 import BeautifulSoup
 
 st.markdown(
     """
@@ -127,7 +128,7 @@ st.markdown(
         font-weight: bold;
         color: #eb1921;  /* Black text */
     }
-    .stSidebar,.stSidebarCollapsedControl {
+    .stSidebar,.stSidebarCollapsedControl, .stCode {
        display:none;
     }
     </style>
@@ -153,8 +154,8 @@ icons = {
 
 # Define the greeting message
 # Define the greeting message in English and Spanish
-GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to Informa AI. How can I assist you today?"}
-GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a Informa AI. ¿En qué puedo ayudarte hoy?"}
+GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to QueryXpert AI. How can I assist you today?"}
+GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a QueryXpert AI. ¿En qué puedo ayudarte hoy?"}
 
 # Retrieve Snowflake credentials from secrets
 HOST = st.secrets["SF_Dinesh2012"]["host"]
@@ -174,6 +175,24 @@ if 'CONN' not in st.session_state or st.session_state.CONN is None:
         warehouse=st.secrets["SF_Dinesh2012"]["warehouse"],
         role=st.secrets["SF_Dinesh2012"]["role"]
     )
+
+
+def sanitize_chatbot_response(response):
+    """
+    Use BeautifulSoup to parse and clean the HTML response, ensuring
+    that unmatched closing tags or extra tags are removed.
+    """
+    try:
+        # Parse the response as HTML using BeautifulSoup
+        soup = BeautifulSoup(response, "html.parser")
+        
+        # Extract text content if needed, removing any excessive HTML tags
+        cleaned_response = soup.prettify()  # Optionally, can use soup.get_text() for plain text
+        
+        return cleaned_response
+    except Exception as e:
+        # If there's an error, return the raw response
+        return response
 
 def send_message(prompt: str) -> Dict[str, Any]:
     """Calls the REST API and returns the response."""
@@ -212,11 +231,13 @@ def display_message_with_icon(role: str, message: str):
                 <div class="assistant-message-container">
                     <div class="assistant-header">
                         <span class="assistant-icon">{st.session_state.icons[role]}</span>
-                        <span class="assistant-name">Informa AI</span>
+                        <span class="assistant-name">QueryXpert AI</span>
                     </div>
                     <div class="assistant-message">{message}</div>
                 </div>
                 """, unsafe_allow_html=True)
+           # st.session_state.messages.append({"role": "assistant", "content": message})
+            
     else:
         # User message container
         with st.container():
@@ -232,25 +253,127 @@ def display_message_with_icon(role: str, message: str):
 
 def process_message(prompt: str) -> None:
     """Processes a message and adds the response to the chat."""
+    # st.session_state.messages.append(
+    #     {"role": "user", "content": [{"type": "text", "text": prompt}]}
+    # )
+    # with st.chat_message("user"):
+    #     st.markdown(prompt)
+
+        # Define user and assistant icons
+    user_icon = st.session_state.icons["user"]
+    assistant_icon = st.session_state.icons["assistant"]
+    
+    # Create the HTML for the user message with icon
+    user_message_html = f'''
+    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <span class="user-icon" style="margin-right: 8px;">{user_icon}</span>
+        <div style="background-color: #e1f5fe; padding: 10px; border-radius: 10px; max-width: 80%;">
+            {prompt}
+        </div>
+    </div>
+    '''
+    
+    # Append user message to session state and display it
     st.session_state.messages.append(
         {"role": "user", "content": [{"type": "text", "text": prompt}]}
     )
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Generating response..."):
+    st.markdown(user_message_html, unsafe_allow_html=True)
+    # with st.chat_message("assistant"):
+
+    with st.spinner("Generating response..."):
             response = send_message(prompt=prompt)
             content = response["message"]["content"]
             display_content(content=content)
+
     st.session_state.messages.append({"role": "assistant", "content": content})
+
+# def process_message(prompt: str) -> None:
+#     """Processes a message and adds the response to the chat with icons, using custom HTML formatting."""
+    
+#     # Define user and assistant icons
+#     user_icon = st.session_state.icons["user"]
+#     assistant_icon = st.session_state.icons["assistant"]
+    
+#     # Create the HTML for the user message with icon
+#     user_message_html = f'''
+#     <div style="display: flex; align-items: center; margin-bottom: 10px;">
+#         <span class="user-icon" style="margin-right: 8px;">{user_icon}</span>
+#         <div style="background-color: #e1f5fe; padding: 10px; border-radius: 10px; max-width: 80%;">
+#             {prompt}
+#         </div>
+#     </div>
+#     '''
+    
+#     # Append user message to session state and display it
+#     st.session_state.messages.append(
+#         {"role": "user", "content": [{"type": "text", "text": prompt}]}
+#     )
+#     st.markdown(user_message_html, unsafe_allow_html=True)
+    
+#     # Generate assistant's response and prepend icon
+#     with st.spinner("Generating response..."):
+#         response = send_message(prompt=prompt)
+#         content = response["message"]["content"]
+        
+#         # Create the HTML for the assistant message with icon
+#         # assistant_message_html = f'''
+#         # <div style="display: flex; align-items: center; margin-bottom: 10px;">
+#         #     <span class="assistant-icon" style="margin-right: 8px;">{assistant_icon}</span>
+#         # '''
+        
+#         # Call display_content to process the content
+#         processed_content = display_content(content)
+        
+#         # Continue building the assistant message HTML
+#         # assistant_message_html += f'''
+#         #     <div style="background-color: #f1f8e9; padding: 10px; border-radius: 10px; max-width: 80%;">
+#         #         {processed_content}
+#         #     </div>
+#         # </div>
+#         # '''
+    
+#     # Append assistant message to session state and display it
+#     st.session_state.messages.append(
+#         {"role": "assistant", "content": [{"type": "text", "text": content}]}
+#     )
+#     #st.markdown(assistant_message_html, unsafe_allow_html=True)
 
 
 def display_content(content: list, message_index: int = None) -> None:
     """Displays a content item for a message."""
     message_index = message_index or len(st.session_state.messages)
+    # st.write(len(st.session_state.messages))
+    # st.write(message_index)
+    # st.write(content)
     for item in content:
-        if item["type"] == "text":
-            st.markdown(item["text"])
+        if item["type"] == "text" :
+            # Display the assistant's message with an icon
+            if message_index < len(st.session_state.messages) and st.session_state.messages[message_index]["role"] == "user":
+               user_icon = st.session_state.icons["user"]
+               user_message_html = f'''
+                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                    <span class="user-icon" style="margin-right: 8px;">{user_icon}</span>
+                    <div style="background-color: #e1f5fe; padding: 10px; border-radius: 10px; max-width: 80%;">
+                        {item["text"]}
+                    </div>
+                </div>
+                '''
+               st.markdown(user_message_html, unsafe_allow_html=True)
+            else: # st.session_state.messages[message_index]["role"] == "assistant" :
+                
+                sanitized_response = sanitize_chatbot_response(item["text"])
+                # Display the user's message with an icon               
+                assistant_icon = st.session_state.icons["assistant"]
+                assistant_message_html = f'''
+                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                    <span class="assistant-icon" style="margin-right: 8px;">{assistant_icon}</span>
+                    <div style="background-color: #f1f8e9; padding: 10px; border-radius: 10px; max-width: 80%;">
+                        {sanitized_response}
+                    </div>
+                </div>
+                '''
+                st.markdown(assistant_message_html, unsafe_allow_html=True)
+
         elif item["type"] == "suggestions":
             with st.expander("Suggestions", expanded=True):
                 for suggestion_index, suggestion in enumerate(item["suggestions"]):
@@ -262,7 +385,6 @@ def display_content(content: list, message_index: int = None) -> None:
             with st.expander("Results", expanded=True):
                 with st.spinner("Running SQL..."):
                     df = pd.read_sql(item["statement"], st.session_state.CONN)
-                    #df = session.sql(item["statement"]).to_pandas()
 
                     if len(df.index) > 1:
                         data_tab, line_tab, bar_tab = st.tabs(
@@ -287,74 +409,9 @@ def display_content(content: list, message_index: int = None) -> None:
                         st.dataframe(df)
 
 
-st.title("QueryXpert AI")
-# st.markdown(f"Semantic Model: `{FILE}`")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    st.session_state.suggestions = []
-    st.session_state.active_suggestion = None
-
-for message_index, message in enumerate(st.session_state.messages):
-    with st.chat_message(message["role"]):
-        display_content(content=message["content"], message_index=message_index)
-
-if user_input := st.chat_input("What is your question?"):
-    process_message(prompt=user_input)
-
-if st.session_state.active_suggestion:
-    process_message(prompt=st.session_state.active_suggestion)
-    st.session_state.active_suggestion = None
-
-##########OLD code with 2 click issue on suggestions #######
-# def process_message(prompt: str) -> None:
-#     """Processes a message and adds the response to the chat."""
-#     st.session_state.messages.append(
-#         {"role": "user", "content": [{"type": "text", "text": prompt}]}
-#     )
-#     with st.chat_message("user"):
-#         st.markdown(prompt)
-#     with st.chat_message("assistant"):
-#         with st.spinner("Generating response..."):
-#             response = send_message(prompt=prompt)
-#             request_id = response["request_id"]
-#             content = response["message"]["content"]
-#             st.session_state.messages.append(
-#                 {**response['message'], "request_id": request_id}
-#             )
-#             display_content(content=content, request_id=request_id)  # type: ignore[arg-type]
-
-
-# # Modify `process_message` to use only the custom icons for user and assistant
-# # def process_message(prompt: str) -> None:
-# #     """Processes a message and adds the response to the chat."""
-# #     # Add user message
-# #     st.session_state.messages.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
-# #     display_message_with_icon("user", prompt)  # Display user message with icon
-
-# #     # Add assistant message with spinner
-# #     with st.spinner("Generating response..."):
-# #         response = send_message(prompt=prompt)
-# #         content = response["message"]["content"]
-# #         request_id = response["request_id"]
-        
-# #         # Add assistant response to session and display
-# #         st.session_state.messages.append({**response['message'], "request_id": request_id})
-# #         for item in content:
-# #             if item["type"] == "text":
-# #                 display_message_with_icon("assistant", item["text"])
-# #         display_content(content=content, request_id=request_id)
-
-# def display_content(
-#     content: List[Dict[str, str]],
-#     request_id: Optional[str] = None,
-#     message_index: Optional[int] = None,
-# ) -> None:
+# def display_content(content: list, message_index: int = None) -> None:
 #     """Displays a content item for a message."""
 #     message_index = message_index or len(st.session_state.messages)
-#     if request_id:
-#         with st.expander("Request ID", expanded=False):
-#             st.markdown(request_id)
 #     for item in content:
 #         if item["type"] == "text":
 #             st.markdown(item["text"])
@@ -364,17 +421,14 @@ if st.session_state.active_suggestion:
 #                     if st.button(suggestion, key=f"{message_index}_{suggestion_index}"):
 #                         st.session_state.active_suggestion = suggestion
 #         elif item["type"] == "sql":
-#             display_sql(item["statement"])
+#             with st.expander("SQL Query", expanded=False):
+#                 st.code(item["statement"], language="sql")
+#             with st.expander("Results", expanded=True):
+#                 with st.spinner("Running SQL..."):
+#                     df = pd.read_sql(item["statement"], st.session_state.CONN)
+#                     #df = session.sql(item["statement"]).to_pandas()
 
-
-# @st.cache_data
-# def display_sql(sql: str) -> None:
-#     with st.expander("SQL Query", expanded=False):
-#         st.code(sql, language="sql")
-#     with st.expander("Results", expanded=True):
-#         with st.spinner("Running SQL..."):
-#             df = pd.read_sql(sql, st.session_state.CONN)
-#             if len(df.index) > 1:
+#                     if len(df.index) > 1:
 #                         data_tab, line_tab, bar_tab = st.tabs(
 #                             ["Data", "Line Chart", "Bar Chart"]
 #                         )
@@ -393,63 +447,33 @@ if st.session_state.active_suggestion:
 #                                 st.bar_chart(df[numeric_columns])  # Plot only numeric columns
 #                         else:
 #                             st.warning("No numeric columns available for plotting.")
-#             else:
+#                     else:
 #                         st.dataframe(df)
 
 
-# def show_conversation_history() -> None:
-#     for message_index, message in enumerate(st.session_state.messages):
-#         chat_role = "assistant" if message["role"] == "analyst" else "user"
-#         with st.chat_message(chat_role):
-#             display_content(
-#                 content=message["content"],
-#                 request_id=message.get("request_id"),
-#                 message_index=message_index,
-#             )
+st.title("QueryXpert AI")
+# st.markdown(f"Semantic Model: `{FILE}`")
 
-# # def show_conversation_history() -> None:
-# #     for message_index, message in enumerate(st.session_state.messages):
-# #         chat_role = "assistant" if message["role"] == "analyst" else "user"
-# #        # display_message_with_icon(chat_role, message["content"][0]["text"])
-# #     with st.chat_message(chat_role):
-# #         display_content(
-# #             content=message["content"],
-# #             request_id=message.get("request_id"),
-# #             message_index=message_index,
-# #         )
+if "messages" not in st.session_state:
+    
+    st.session_state.messages = []
+    st.session_state.suggestions = []
+    st.session_state.active_suggestion = None
+   
+    if len(st.session_state.messages) == 0:  # Check if this is the first interaction
+     display_message_with_icon("assistant", GREETING_MESSAGE_EN["content"])
+    #st.session_state.messages.append(GREETING_MESSAGE_EN) 
 
-# # def show_conversation_history() -> None:
-# #     for message_index, message in enumerate(st.session_state.messages):
-# #         chat_role = "assistant" if message["role"] == "analyst" else "user"
-# #         with st.chat_message(chat_role):
-# #             display_content(
-# #                 content=message["content"],
-# #                 request_id=message.get("request_id"),
-# #                 message_index=message_index,
-# #             )
+for message_index, message in enumerate(st.session_state.messages):
+    # with st.chat_message(message["role"]):
+        #st.write("from 440")
+        display_content(content=message["content"], message_index=message_index)
 
+if user_input := st.chat_input("What is your question?"):
+    process_message(prompt=user_input)
+  
 
-# def reset() -> None:
-#     st.session_state.messages = []
-#     st.session_state.suggestions = []
-#     st.session_state.active_suggestion = None
+if st.session_state.active_suggestion:
+    process_message(prompt=st.session_state.active_suggestion)
+    st.session_state.active_suggestion = None
 
-
-# st.title("QueryXpert AI")
-# # st.markdown(f"Semantic Model: `{FILE}`")
-
-# if "messages" not in st.session_state:
-#     reset()
-
-# # with st.sidebar:
-# #     if st.button("Reset conversation"):
-# #         reset()
-
-# show_conversation_history()
-
-# if user_input := st.chat_input("What is your question?"):
-#     process_message(prompt=user_input)
-
-# if st.session_state.active_suggestion:
-#     process_message(prompt=st.session_state.active_suggestion)
-#     st.session_state.active_suggestion = None  # Clear after processing
