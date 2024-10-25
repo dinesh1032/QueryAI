@@ -65,7 +65,7 @@ st.markdown(
         opacity: 1;
         padding: 10px;
         text-align: left;
-        font: normal normal 600 14px/20px 'Poppins', sans-serif;
+        font: normal normal medium 14px/20px 'Poppins', sans-serif;
         letter-spacing: 0px;
         color: #333333;
         max-width: 80%;
@@ -236,7 +236,8 @@ def display_message_with_icon(role: str, message: str):
                     <div class="assistant-message">{message}</div>
                 </div>
                 """, unsafe_allow_html=True)
-           # st.session_state.messages.append({"role": "assistant", "content": message})
+            st.session_state.messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": message}]})
             
     else:
         # User message container
@@ -265,14 +266,15 @@ def process_message(prompt: str) -> None:
     
     # Create the HTML for the user message with icon
     user_message_html = f'''
-    <div style="display: flex; align-items: center; margin-bottom: 10px;">
-        <span class="user-icon" style="margin-right: 8px;">{user_icon}</span>
-        <div style="background-color: #e1f5fe; padding: 10px; border-radius: 10px; max-width: 80%;">
-            {prompt}
-        </div>
-    </div>
-    '''
-    
+                <div class="user-message-container">
+                    <div class="user-header">
+                        <span class="user-name">You</span>
+                        <span class="user-icon">{user_icon}</span>
+                    </div>
+                    <div class="user-message">{prompt}</div>
+                </div> '''
+
+
     # Append user message to session state and display it
     st.session_state.messages.append(
         {"role": "user", "content": [{"type": "text", "text": prompt}]}
@@ -341,22 +343,26 @@ def process_message(prompt: str) -> None:
 
 def display_content(content: list, message_index: int = None) -> None:
     """Displays a content item for a message."""
-    message_index = message_index or len(st.session_state.messages)
+    message_index = message_index or len(st.session_state.messages)-1
     # st.write(len(st.session_state.messages))
     # st.write(message_index)
     # st.write(content)
     for item in content:
         if item["type"] == "text" :
             # Display the assistant's message with an icon
-            if message_index < len(st.session_state.messages) and st.session_state.messages[message_index]["role"] == "user":
+            # st.write(message_index) # 5
+            # st.write(len(st.session_state.messages))  # 6
+            if message_index < len(st.session_state.messages)-1 and st.session_state.messages[message_index]["role"] == "user":
                user_icon = st.session_state.icons["user"]
+               #st.write(st.session_state.messages[message_index]["role"])
                user_message_html = f'''
-                <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                    <span class="user-icon" style="margin-right: 8px;">{user_icon}</span>
-                    <div style="background-color: #e1f5fe; padding: 10px; border-radius: 10px; max-width: 80%;">
-                        {item["text"]}
+                <div class="user-message-container">
+                    <div class="user-header">
+                        <span class="user-name">You</span>
+                        <span class="user-icon">{user_icon}</span>
                     </div>
-                </div>
+                    <div class="user-message">{item["text"]}</div>
+                </div>                
                 '''
                st.markdown(user_message_html, unsafe_allow_html=True)
             else: # st.session_state.messages[message_index]["role"] == "assistant" :
@@ -365,12 +371,14 @@ def display_content(content: list, message_index: int = None) -> None:
                 # Display the user's message with an icon               
                 assistant_icon = st.session_state.icons["assistant"]
                 assistant_message_html = f'''
-                <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                    <span class="assistant-icon" style="margin-right: 8px;">{assistant_icon}</span>
-                    <div style="background-color: #f1f8e9; padding: 10px; border-radius: 10px; max-width: 80%;">
-                        {sanitized_response}
+                  <div class="assistant-message-container">
+                    <div class="assistant-header">
+                        <span class="assistant-icon">{assistant_icon}</span>
+                        <span class="assistant-name">QueryXpert AI</span>
                     </div>
+                    <div class="assistant-message">{sanitized_response}</div>
                 </div>
+
                 '''
                 st.markdown(assistant_message_html, unsafe_allow_html=True)
 
@@ -459,15 +467,30 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.suggestions = []
     st.session_state.active_suggestion = None
+    
+    if 'GREETING_DISPLAYED' not in st.session_state:
+     st.session_state.GREETING_DISPLAYED = False
    
-    if len(st.session_state.messages) == 0:  # Check if this is the first interaction
-     display_message_with_icon("assistant", GREETING_MESSAGE_EN["content"])
-    #st.session_state.messages.append(GREETING_MESSAGE_EN) 
+    # if len(st.session_state.messages) == 0:  # Check if this is the first interaction
+    #  display_message_with_icon("assistant", GREETING_MESSAGE_EN["content"])
+    # #st.session_state.messages.append(GREETING_MESSAGE_EN) 
+
+if not st.session_state.GREETING_DISPLAYED:
+    greeting_message = GREETING_MESSAGE_EN  # You can change this based on language preference
+    display_message_with_icon("assistant", greeting_message["content"])
+    st.session_state.GREETING_DISPLAYED = True
+
+
 
 for message_index, message in enumerate(st.session_state.messages):
-    # with st.chat_message(message["role"]):
-        #st.write("from 440")
-        display_content(content=message["content"], message_index=message_index)
+    # Skip the greeting message if it has already been displayed
+    if not st.session_state.GREETING_DISPLAYED and message["content"] in [GREETING_MESSAGE_EN["content"], GREETING_MESSAGE_ES["content"]]:
+        # Set flag to true once the greeting message is displayed
+        greeting_displayed = True
+    # Display the content for other messages or the first greeting
+    display_content(content=message["content"], message_index=message_index)
+
+
 
 if user_input := st.chat_input("What is your question?"):
     process_message(prompt=user_input)
