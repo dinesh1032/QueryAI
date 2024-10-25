@@ -1,28 +1,11 @@
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+import requests
+import snowflake.connector
 import streamlit as st
-import re
-from snowflake.core import Root  # Requires snowflake>=0.8.0
-from snowflake.cortex import Complete
-from snowflake.snowpark.context import get_active_session
-from snowflake.snowpark import Session
-from deep_translator import GoogleTranslator  # Translation library
-from bs4 import BeautifulSoup
-
-def load_svg(svg_filename):
-    with open(svg_filename, "r") as file:
-        return file.read()
-
-# Load assistant and user icons from their respective SVG files
-assistant_svg = load_svg("assets/chatbot.svg")
-user_svg = load_svg("assets/user.svg")
 
 
-
-# Define the greeting message
-# Define the greeting message in English and Spanish
-GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to Informa AI. How can I assist you today?"}
-GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a Informa AI. ¿En qué puedo ayudarte hoy?"}
-
-# Import the fonts and inject custom CSS for assistant and user messages
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet">
@@ -144,369 +127,329 @@ st.markdown(
         font-weight: bold;
         color: #eb1921;  /* Black text */
     }
+    .stSidebar,.stSidebarCollapsedControl {
+       display:none;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
+
+
+
+def load_svg(svg_filename):
+    with open(svg_filename, "r") as file:
+        return file.read()
+
+# Load assistant and user icons from their respective SVG files
+assistant_svg = load_svg("assets/chatbot.svg")
+user_svg = load_svg("assets/user.svg")
 
 icons = {
     "assistant": assistant_svg,  # Loaded chatbot SVG
     "user": user_svg             # Loaded user SVG
 }
 
-# # Define icons using emojis for simplicity
-# icons = {
-#     "assistant": "🤖",  # Robot Face
-#     "user": "🙋‍♀️"       # Person Raising Hand (Female)
-# }
 
-# Global variables to hold the Snowpark session and Root
-snowpark_session = None
-root = None
-user_language = None
-# question_translated = None
+# Define the greeting message
+# Define the greeting message in English and Spanish
+GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to Informa AI. How can I assist you today?"}
+GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a Informa AI. ¿En qué puedo ayudarte hoy?"}
 
-def get_snowflake_session():
-    # Access credentials from Streamlit secrets
-    snowflake_credentials = st.secrets["SF_Dinesh2012"]
-    global snowpark_session, root
-    if snowpark_session is None:
-        try:
-            # Create Snowpark session
-            connection_parameters = {
-                "account": snowflake_credentials["account"],
-                "user": snowflake_credentials["user"],
-                "password": snowflake_credentials["password"],
-                "warehouse": snowflake_credentials["warehouse"],
-                "database": snowflake_credentials["database"],
-                "schema": snowflake_credentials["schema"]
-            }
-            snowpark_session = Session.builder.configs(connection_parameters).create()
-            root = Root(snowpark_session)  # Create the Root object
-        except Exception as e:
-            st.error(f"Failed to create Snowflake session: {e}")
-            st.stop()
-    return snowpark_session 
+# Retrieve Snowflake credentials from secrets
+HOST = st.secrets["SF_Dinesh2012"]["host"]
+DATABASE = st.secrets["SF_Dinesh2012"]["database"]
+SCHEMA = st.secrets["SF_Dinesh2012"]["schema"]
+STAGE = st.secrets["SF_Dinesh2012"]["stage"]
+FILE = st.secrets["SF_Dinesh2012"]["file"]
 
-# Define available models (can be set to a default)
-DEFAULT_MODEL = "mistral-large"
-MODELS = [   
-    "mistral-large",
-    "snowflake-arctic",
-    "llama3-70b",
-    "llama3-8b",
-]
+# Establish connection only if not already present in session state
+if 'CONN' not in st.session_state or st.session_state.CONN is None:
+    st.session_state.CONN = snowflake.connector.connect(
+        user=st.secrets["SF_Dinesh2012"]["user"],
+        password=st.secrets["SF_Dinesh2012"]["password"],
+        account=st.secrets["SF_Dinesh2012"]["account"],
+       # host=HOST,
+       # port=443,
+        warehouse=st.secrets["SF_Dinesh2012"]["warehouse"],
+        role=st.secrets["SF_Dinesh2012"]["role"]
+    )
 
-def sanitize_chatbot_response(response):
-    """
-    Use BeautifulSoup to parse and clean the HTML response, ensuring
-    that unmatched closing tags or extra tags are removed.
-    """
-    try:
-        # Parse the response as HTML using BeautifulSoup
-        soup = BeautifulSoup(response, "html.parser")
-        
-        # Extract text content if needed, removing any excessive HTML tags
-        cleaned_response = soup.prettify()  # Optionally, can use soup.get_text() for plain text
-        
-        return cleaned_response
-    except Exception as e:
-        # If there's an error, return the raw response
-        return response
-
-# def sanitize_chatbot_response(response):
-#     """
-#     Remove unwanted HTML tags from the chatbot's response.
-#     In this case, we are specifically removing closing </div> tags.
-#     """
-#     # Use regex to remove any unwanted </div> tags at the end of the response
-#     cleaned_response = re.sub(r"</div>\s*$", "", response)
-#     return cleaned_response
-
-def init_session_state():
-    """Initialize session state variables.""" 
-    if 'messages' not in st.session_state:
-        st.session_state.messages = [GREETING_MESSAGE_EN]
-    if 'clear_conversation' not in st.session_state:
-        st.session_state.clear_conversation = False
-    if 'model_name' not in st.session_state:
-        st.session_state.model_name = DEFAULT_MODEL  # Set default model
-    if 'num_retrieved_chunks' not in st.session_state:
-        st.session_state.num_retrieved_chunks = 5  # Default context chunks
-    if 'num_chat_messages' not in st.session_state:
-        st.session_state.num_chat_messages = 5  # Default chat history messages
-
-def init_messages():
-    """Initialize the session state for chat messages.""" 
-    if st.session_state.clear_conversation:
-        st.session_state.messages = [GREETING_MESSAGE_EN]  # Reset to greeting message
-        st.session_state.clear_conversation = False  # Reset the flag
-
-def translate_message(message, target_lang):
-    """Translate the message to the desired language using GoogleTranslator."""
-    try:
-        translator = GoogleTranslator(source='auto', target=target_lang)
-        return translator.translate(message)
-    except Exception as e:
-        st.error(f"Translation error: {e}")
-        return message  # Fallback to original message if translation fails
-
-def init_service_metadata():
-    """Initialize cortex search service metadata.""" 
-    if "service_metadata" not in st.session_state:
-        try:
-            services = snowpark_session.sql("SHOW CORTEX SEARCH SERVICES;").collect()
-            service_metadata = []
-            if services:
-                for s in services:
-                    svc_name = s["name"]
-                    svc_search_col = snowpark_session.sql(f"DESC CORTEX SEARCH SERVICE {svc_name};").collect()[0]["search_column"]
-                    service_metadata.append({"name": svc_name, "search_column": svc_search_col})
-            st.session_state.service_metadata = service_metadata
-        except Exception as e:
-            st.error(f"Failed to fetch Cortex search services: {e}")
-            st.session_state.service_metadata = []
-    
-    if not st.session_state.service_metadata:
-        st.error("No Cortex search services found.")
+def send_message(prompt: str) -> Dict[str, Any]:
+    """Calls the REST API and returns the response."""
+    request_body = {
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        "semantic_model_file": f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}",
+    }
+    resp = requests.post(
+        url=f"https://{HOST}/api/v2/cortex/analyst/message",
+        json=request_body,
+        headers={
+            "Authorization": f'Snowflake Token="{st.session_state.CONN.rest.token}"',
+            "Content-Type": "application/json",
+        },
+    )
+    request_id = resp.headers.get("X-Snowflake-Request-Id")
+    if resp.status_code < 400:
+        return {**resp.json(), "request_id": request_id}  # type: ignore[arg-type]
     else:
-        # Set default selected cortex search service
-        if 'selected_cortex_search_service' not in st.session_state:
-            st.session_state.selected_cortex_search_service = st.session_state.service_metadata[0]["name"]
+        st.session_state.messages.pop()
+        raise Exception(
+            f"Failed request (id: {request_id}) with status {resp.status_code}: {resp.text}"
+        )
 
-def query_cortex_search_service(query, columns=[], filter={}):
-    """Query the selected cortex search service.""" 
-    db, schema = snowpark_session.get_current_database(), snowpark_session.get_current_schema()
+if "icons" not in st.session_state:
+    st.session_state.icons = {
+        "assistant": assistant_svg,
+        "user": user_svg
+    }
 
-    cortex_search_service = (
-        root.databases[db]
-        .schemas[schema]
-        .cortex_search_services[st.session_state.selected_cortex_search_service]
-    )
-
-    context_documents = cortex_search_service.search(
-        query, columns=columns, filter=filter, limit=st.session_state.num_retrieved_chunks
-    )
-    results = context_documents.results
-
-    service_metadata = st.session_state.service_metadata
-    search_col = [s["search_column"] for s in service_metadata if s["name"] == st.session_state.selected_cortex_search_service][0].lower()
-
-    context_str = ""
-    for i, r in enumerate(results):
-        context_str += f"Context document {i+1}: {r[search_col]} \n\n"
-
-    return context_str, results
-
-def get_chat_history():
-    """Retrieve the chat history from session state.""" 
-    try:
-        start_index = max(0, len(st.session_state.messages) - st.session_state.num_chat_messages)
-        return st.session_state.messages[start_index:]
-    except Exception as e:
-        st.error("Error retrieving chat history. Please try again.")
-        return []  # Return an empty list if an error occurs
-
-def complete(model, prompt):
-    """Generate a completion using the specified model.""" 
-   # answer = Complete(model, prompt, session=snowpark_session).replace("$", "\$")
-    return Complete(model, prompt, session=snowpark_session).replace("$", "\$")
-
-def make_chat_history_summary(chat_history, question):
-    """Generate a summary of the chat history combined with the current question.""" 
-    prompt = f"""
-        [INST]
-        Based on the chat history below and the question, generate a query that extends the question
-        with the chat history provided. The query should be in natural language.
-        Answer with only the query. Do not add any explanation.
-
-        <chat_history>
-        {chat_history}
-        </chat_history>
-        <question>
-        {question}
-        </question>
-        [/INST]
-    """
-    summary = complete(st.session_state.model_name, prompt)
-
-    return summary
-
-def create_prompt(user_question):
-    """Create a prompt for the language model.""" 
-    prompt_context, results = query_cortex_search_service(
-        user_question,
-        columns=["chunk", "file_url", "relative_path"],
-        filter={"@and": [{"@eq": {"language": "English"}}]},
-    )
-
-    prompt = f"""
-            [INST]
-            You are a helpful AI chat assistant with RAG capabilities. When a user asks you a question,
-            you will also be given context provided between <context> and </context> tags. Use that context
-            to provide a summary that addresses the user's question. Ensure the answer is coherent, concise,
-            and directly relevant to the user's question.
-
-            If the user asks a generic question which cannot be answered with the given context,
-            just say "I don't know the answer to that question."
-
-            Don't say things like "according to the provided context."
-
-            <context>
-            {prompt_context}
-            </context>
-            <question>
-            {user_question}
-            </question>
-            [/INST]
-            Answer:
-            """
-    return prompt, results
-
-hide_streamlit_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            /* Optional: Customize background color */
-            .reportview-container {
-                background-color: grey;
-            }
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-def main():
-    global user_language
-    question_translated = None
-
-    # Step 1: Language selection prompt
-    language_choice = st.radio("**Please choose your language / Por favor, elija su idioma!**", ("English", "Español"))
-
-
-  # Check if the language has changed or if this is the first time the user selects the language
-    if "user_language" not in st.session_state or (language_choice == "English" and st.session_state.user_language != "en") or (language_choice == "Español" and st.session_state.user_language != "es"):
-        
-        if language_choice == "English":
-            st.session_state.user_language = "en"
-            user_language = "en"
-            st.session_state.messages = [GREETING_MESSAGE_EN]  # Set English greeting message
-           # st.success("You have chosen English!")  # Show success alert
-        else:
-            st.session_state.user_language = "es"
-            user_language = "es"
-            st.session_state.messages = [GREETING_MESSAGE_ES]  # Set Spanish greeting message
-           # st.success("¡Has elegido Español!")  # Show success alert
+def display_message_with_icon(role: str, message: str):
+    if role == "assistant":
+        # Assistant message container
+        with st.container():
+            st.markdown(f"""
+                <div class="assistant-message-container">
+                    <div class="assistant-header">
+                        <span class="assistant-icon">{st.session_state.icons[role]}</span>
+                        <span class="assistant-name">Informa AI</span>
+                    </div>
+                    <div class="assistant-message">{message}</div>
+                </div>
+                """, unsafe_allow_html=True)
     else:
-        # Check if the first message is the English greeting to determine the language
-        if st.session_state.messages[0]["content"] == GREETING_MESSAGE_EN["content"]:
-            user_language = "en"
-        else:
-            user_language = "es"   
-
-    # Initialize session state and other components
-    init_session_state()
-
-    # Initialize greeting message based on selected language
-    if st.session_state.clear_conversation:
-        if user_language == "es":
-            st.session_state.messages = [GREETING_MESSAGE_ES]  # Reset to Spanish greeting message
-        else:
-            st.session_state.messages = [GREETING_MESSAGE_EN]  # Reset to English greeting message
-        st.session_state.clear_conversation = False
-
-    init_service_metadata()
-    init_messages()
-    
-    # Display chat messages from history on app rerun
-    for message in st.session_state.messages:
-        if message["role"] == "assistant":
-            # Assistant message container
-            with st.container():
-                st.markdown(f"""
-                    <div class="assistant-message-container">
-                        <div class="assistant-header">
-                            <span class="assistant-icon">{icons.get("assistant", assistant_svg)}</span>
-                            <span class="assistant-name">Informa AI</span>
-                        </div>
-                        <div class="assistant-message">{message["content"]}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            # User message container
-            with st.container():
-                st.markdown(f"""
-                    <div class="user-message-container">
-                        <div class="user-header">
-                            <span class="user-name">You</span>
-                            <span class="user-icon">{icons.get("user", user_svg)}</span>
-                        </div>
-                        <div class="user-message">{message["content"]}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-    disable_chat = (
-        "service_metadata" not in st.session_state
-        or len(st.session_state.service_metadata) == 0
-    )
-    
-    if question := st.chat_input("Type your message here...", disabled=disable_chat):
-        # Initialize the question_translated variable with the default question value
-        question_translated = question
-
-        # If the user language is Spanish, translate the question to English
-        if user_language == "es":
-            question_translated = translate_message(question, "en")
-
-        # Add user message to chat history
-        st.session_state.messages.append({"role": "user", "content": question})
-
-        # Display user message in chat message with styled rectangle
+        # User message container
         with st.container():
             st.markdown(f"""
                 <div class="user-message-container">
                     <div class="user-header">
                         <span class="user-name">You</span>
-                        <span class="user-icon">{icons.get("user", user_svg)}</span>
+                        <span class="user-icon">{st.session_state.icons[role]}</span>
                     </div>
-                    <div class="user-message">{question}</div>
+                    <div class="user-message">{message}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Proceed to generate the answer if the question_translated is valid
-        if question_translated:
-            try:
-                with st.spinner("Thinking..."):
-                    # Create a prompt for the language model
-                    prompt, results = create_prompt(question_translated)
-                    # Get the response from the language model
-                    answer = complete(st.session_state.model_name, prompt)
-                    # Sanitize the chatbot's response to remove any extra closing tags
-                    cleaned_answer = sanitize_chatbot_response(answer)
+def process_message(prompt: str) -> None:
+    """Processes a message and adds the response to the chat."""
+    st.session_state.messages.append(
+        {"role": "user", "content": [{"type": "text", "text": prompt}]}
+    )
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    with st.chat_message("assistant"):
+        with st.spinner("Generating response..."):
+            response = send_message(prompt=prompt)
+            content = response["message"]["content"]
+            display_content(content=content)
+    st.session_state.messages.append({"role": "assistant", "content": content})
 
-                    # Translate back the response if the user language is Spanish
-                    if user_language == "es":
-                        cleaned_answer = translate_message(cleaned_answer, "es")
 
-                    # Add assistant's response to chat history
-                    st.session_state.messages.append({"role": "assistant", "content": cleaned_answer})
+def display_content(content: list, message_index: int = None) -> None:
+    """Displays a content item for a message."""
+    message_index = message_index or len(st.session_state.messages)
+    for item in content:
+        if item["type"] == "text":
+            st.markdown(item["text"])
+        elif item["type"] == "suggestions":
+            with st.expander("Suggestions", expanded=True):
+                for suggestion_index, suggestion in enumerate(item["suggestions"]):
+                    if st.button(suggestion, key=f"{message_index}_{suggestion_index}"):
+                        st.session_state.active_suggestion = suggestion
+        elif item["type"] == "sql":
+            with st.expander("SQL Query", expanded=False):
+                st.code(item["statement"], language="sql")
+            with st.expander("Results", expanded=True):
+                with st.spinner("Running SQL..."):
+                    df = pd.read_sql(item["statement"], st.session_state.CONN)
+                    #df = session.sql(item["statement"]).to_pandas()
 
-                    # Display assistant's response in chat message with styled rectangle
-                    with st.container():
-                        st.markdown(f"""
-                            <div class="assistant-message-container">
-                                <div class="assistant-header">
-                                    <span class="assistant-icon">{icons.get("assistant", assistant_svg)}</span>
-                                    <span class="assistant-name">Informa AI</span>
-                                </div>
-                                <div class="assistant-message">{cleaned_answer}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"An error occurred while processing your request: {e}")
+                    if len(df.index) > 1:
+                        data_tab, line_tab, bar_tab = st.tabs(
+                            ["Data", "Line Chart", "Bar Chart"]
+                        )
+                        data_tab.dataframe(df)
 
-if __name__ == "__main__":
-    # Establish the Snowflake session
-    get_snowflake_session()
-    # Run the main function
-    main()
+                        # Ensure you are only using numeric columns for plotting
+                        numeric_columns = df.select_dtypes(include=["float", "int"]).columns
+
+                        if len(numeric_columns) > 0:
+                            df = df.set_index(df.columns[0])  # Use first column as index
+
+                            with line_tab:
+                                st.line_chart(df[numeric_columns])  # Plot only numeric columns
+
+                            with bar_tab:
+                                st.bar_chart(df[numeric_columns])  # Plot only numeric columns
+                        else:
+                            st.warning("No numeric columns available for plotting.")
+                    else:
+                        st.dataframe(df)
+
+
+st.title("QueryXpert AI")
+# st.markdown(f"Semantic Model: `{FILE}`")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    st.session_state.suggestions = []
+    st.session_state.active_suggestion = None
+
+for message_index, message in enumerate(st.session_state.messages):
+    with st.chat_message(message["role"]):
+        display_content(content=message["content"], message_index=message_index)
+
+if user_input := st.chat_input("What is your question?"):
+    process_message(prompt=user_input)
+
+if st.session_state.active_suggestion:
+    process_message(prompt=st.session_state.active_suggestion)
+    st.session_state.active_suggestion = None
+
+##########OLD code with 2 click issue on suggestions #######
+# def process_message(prompt: str) -> None:
+#     """Processes a message and adds the response to the chat."""
+#     st.session_state.messages.append(
+#         {"role": "user", "content": [{"type": "text", "text": prompt}]}
+#     )
+#     with st.chat_message("user"):
+#         st.markdown(prompt)
+#     with st.chat_message("assistant"):
+#         with st.spinner("Generating response..."):
+#             response = send_message(prompt=prompt)
+#             request_id = response["request_id"]
+#             content = response["message"]["content"]
+#             st.session_state.messages.append(
+#                 {**response['message'], "request_id": request_id}
+#             )
+#             display_content(content=content, request_id=request_id)  # type: ignore[arg-type]
+
+
+# # Modify `process_message` to use only the custom icons for user and assistant
+# # def process_message(prompt: str) -> None:
+# #     """Processes a message and adds the response to the chat."""
+# #     # Add user message
+# #     st.session_state.messages.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
+# #     display_message_with_icon("user", prompt)  # Display user message with icon
+
+# #     # Add assistant message with spinner
+# #     with st.spinner("Generating response..."):
+# #         response = send_message(prompt=prompt)
+# #         content = response["message"]["content"]
+# #         request_id = response["request_id"]
+        
+# #         # Add assistant response to session and display
+# #         st.session_state.messages.append({**response['message'], "request_id": request_id})
+# #         for item in content:
+# #             if item["type"] == "text":
+# #                 display_message_with_icon("assistant", item["text"])
+# #         display_content(content=content, request_id=request_id)
+
+# def display_content(
+#     content: List[Dict[str, str]],
+#     request_id: Optional[str] = None,
+#     message_index: Optional[int] = None,
+# ) -> None:
+#     """Displays a content item for a message."""
+#     message_index = message_index or len(st.session_state.messages)
+#     if request_id:
+#         with st.expander("Request ID", expanded=False):
+#             st.markdown(request_id)
+#     for item in content:
+#         if item["type"] == "text":
+#             st.markdown(item["text"])
+#         elif item["type"] == "suggestions":
+#             with st.expander("Suggestions", expanded=True):
+#                 for suggestion_index, suggestion in enumerate(item["suggestions"]):
+#                     if st.button(suggestion, key=f"{message_index}_{suggestion_index}"):
+#                         st.session_state.active_suggestion = suggestion
+#         elif item["type"] == "sql":
+#             display_sql(item["statement"])
+
+
+# @st.cache_data
+# def display_sql(sql: str) -> None:
+#     with st.expander("SQL Query", expanded=False):
+#         st.code(sql, language="sql")
+#     with st.expander("Results", expanded=True):
+#         with st.spinner("Running SQL..."):
+#             df = pd.read_sql(sql, st.session_state.CONN)
+#             if len(df.index) > 1:
+#                         data_tab, line_tab, bar_tab = st.tabs(
+#                             ["Data", "Line Chart", "Bar Chart"]
+#                         )
+#                         data_tab.dataframe(df)
+
+#                         # Ensure you are only using numeric columns for plotting
+#                         numeric_columns = df.select_dtypes(include=["float", "int"]).columns
+
+#                         if len(numeric_columns) > 0:
+#                             df = df.set_index(df.columns[0])  # Use first column as index
+
+#                             with line_tab:
+#                                 st.line_chart(df[numeric_columns])  # Plot only numeric columns
+
+#                             with bar_tab:
+#                                 st.bar_chart(df[numeric_columns])  # Plot only numeric columns
+#                         else:
+#                             st.warning("No numeric columns available for plotting.")
+#             else:
+#                         st.dataframe(df)
+
+
+# def show_conversation_history() -> None:
+#     for message_index, message in enumerate(st.session_state.messages):
+#         chat_role = "assistant" if message["role"] == "analyst" else "user"
+#         with st.chat_message(chat_role):
+#             display_content(
+#                 content=message["content"],
+#                 request_id=message.get("request_id"),
+#                 message_index=message_index,
+#             )
+
+# # def show_conversation_history() -> None:
+# #     for message_index, message in enumerate(st.session_state.messages):
+# #         chat_role = "assistant" if message["role"] == "analyst" else "user"
+# #        # display_message_with_icon(chat_role, message["content"][0]["text"])
+# #     with st.chat_message(chat_role):
+# #         display_content(
+# #             content=message["content"],
+# #             request_id=message.get("request_id"),
+# #             message_index=message_index,
+# #         )
+
+# # def show_conversation_history() -> None:
+# #     for message_index, message in enumerate(st.session_state.messages):
+# #         chat_role = "assistant" if message["role"] == "analyst" else "user"
+# #         with st.chat_message(chat_role):
+# #             display_content(
+# #                 content=message["content"],
+# #                 request_id=message.get("request_id"),
+# #                 message_index=message_index,
+# #             )
+
+
+# def reset() -> None:
+#     st.session_state.messages = []
+#     st.session_state.suggestions = []
+#     st.session_state.active_suggestion = None
+
+
+# st.title("QueryXpert AI")
+# # st.markdown(f"Semantic Model: `{FILE}`")
+
+# if "messages" not in st.session_state:
+#     reset()
+
+# # with st.sidebar:
+# #     if st.button("Reset conversation"):
+# #         reset()
+
+# show_conversation_history()
+
+# if user_input := st.chat_input("What is your question?"):
+#     process_message(prompt=user_input)
+
+# if st.session_state.active_suggestion:
+#     process_message(prompt=st.session_state.active_suggestion)
+#     st.session_state.active_suggestion = None  # Clear after processing
