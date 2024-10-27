@@ -159,8 +159,11 @@ icons = {
 
 # Define the greeting message
 # Define the greeting message in English and Spanish
-GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to QueryXpert AI. How can I assist you today?"}
-GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a QueryXpert AI. ¿En qué puedo ayudarte hoy?"}
+# GREETING_MESSAGE_EN = {"role": "assistant", "content": "Hello! Welcome to QueryXpert AI. How can I assist you today?"}
+# GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a QueryXpert AI. ¿En qué puedo ayudarte hoy?"}
+
+GREETING_MESSAGE_EN =  "Hello! Welcome to QueryXpert AI. How can I assist you today?"
+# GREETING_MESSAGE_ES = {"role": "assistant", "content": "¡Hola! Bienvenido a QueryXpert AI. ¿En qué puedo ayudarte hoy?"}
 
 # Retrieve Snowflake credentials from secrets
 HOST = st.secrets["SF_Dinesh2012"]["host"]
@@ -408,6 +411,7 @@ def display_content(content: list, message_index: int = None) -> None:
 
                         # Ensure you are only using numeric columns for plotting
                         numeric_columns = df.select_dtypes(include=["float", "int"]).columns
+                        #date_columns = [col for col in df.columns if "date" in col.lower() or "month" in col.lower() or "year" in col.lower()]
 
                         if len(numeric_columns) > 0:
                             df = df.set_index(df.columns[0])  # Use first column as index
@@ -477,24 +481,29 @@ if "messages" not in st.session_state:
     if 'GREETING_DISPLAYED' not in st.session_state:
      st.session_state.GREETING_DISPLAYED = False
    
-    # if len(st.session_state.messages) == 0:  # Check if this is the first interaction
-    #  display_message_with_icon("assistant", GREETING_MESSAGE_EN["content"])
-    # #st.session_state.messages.append(GREETING_MESSAGE_EN) 
+# greeting_message = {
+#     "type": "text",  # Ensure this matches the expected format in display_content
+#     "content": GREETING_MESSAGE_EN["content"]  # Change based on language preference if needed
+# }
 
 if not st.session_state.GREETING_DISPLAYED:
     greeting_message = GREETING_MESSAGE_EN  # You can change this based on language preference
-    display_message_with_icon("assistant", greeting_message["content"])
+    #st.session_state.messages.insert(0, greeting_message)  # Insert at the start of messages
+    st.session_state.messages.append({ "content": [{"type": "text", "text": greeting_message}]});
     st.session_state.GREETING_DISPLAYED = True
 
-
-
+# Display all messages, including the greeting if it’s the first load
 for message_index, message in enumerate(st.session_state.messages):
-    # Skip the greeting message if it has already been displayed
-    if not st.session_state.GREETING_DISPLAYED and message["content"] in [GREETING_MESSAGE_EN["content"], GREETING_MESSAGE_ES["content"]]:
-        # Set flag to true once the greeting message is displayed
-        greeting_displayed = True
-    # Display the content for other messages or the first greeting
+    #st.write(st.session_state.messages)
     display_content(content=message["content"], message_index=message_index)
+
+# for message_index, message in enumerate(st.session_state.messages):
+#     # Skip the greeting message if it has already been displayed
+#     if not st.session_state.GREETING_DISPLAYED and message["content"] in [GREETING_MESSAGE_EN["content"], GREETING_MESSAGE_ES["content"]]:
+#         # Set flag to true once the greeting message is displayed
+#         greeting_displayed = True
+#     # Display the content for other messages or the first greeting
+#     display_content(content=message["content"], message_index=message_index)
 
 
 
